@@ -9,6 +9,7 @@ import pytesseract as tess
 import re
 import requests
 import cv2
+import numpy
 import json
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.views import exception_handler
@@ -29,7 +30,7 @@ def date_finder(text):#Проделываем тоже самое
         date = re.findall(date_re, i)
         if len(date) != 0:
             print(date)
-            return date
+            return date[0]
 
 def summa_finder(text):
     total_re = r'\ИТОГ\W\W+\d+'#Ищем по слову ИТОГ
@@ -44,7 +45,9 @@ def summa_finder(text):
     for i in totals_list:
         if len(i)!=0:
             print(i)
-            return i
+            XX = ([re.sub('\D+', '', i) for i in i])
+            print(XX)
+            return int(XX[0])#Возвращает все цифры с суммы
 
 def bin_finder(text):#Проделываем тоже самое
     BINs_list = []
@@ -62,42 +65,33 @@ custom_config = r'--psm 6 --oem 3'
 
 @csrf_exempt
 def index(request):
-    context = {}
     data = {}
     texts_list = []
     if request.method == "POST":
         form = GeeksForm(request.POST, request.FILES)
         if form.is_valid():
             img = form.cleaned_data.get("image")
-            obj = GeeksModel.objects.create(
-                img=img
-            )
-            obj.save()
-            print(obj)
-            # imgc = cv2.imdecode(obj.img, flag=1)
-
-            imgf = Image.open(obj.img)
+            imgf = Image.open(img)
+            imcv = cv2.cvtColor(numpy.asarray(imgf), cv2.COLOR_RGB2GRAY)
             texts_list.append(tess.image_to_string(filter(imgf), lang='rus+eng', config=custom_config))  # filt+psm
             texts_list.append(tess.image_to_string(imgf, lang='rus+eng'))  # default
             texts_list.append(tess.image_to_string(imgf, lang='rus+eng', config=custom_config))  # def+psm
             texts_list.append(tess.image_to_string(filter(imgf), lang='rus+eng'))  # filtered
-            # texts_list.append(tess.image_to_string(thrash(imgc), lang='eng+rus', config=custom_config))  # threshold
-            obj.data = date_finder(texts_list)
+            texts_list.append(tess.image_to_string(thrash(imcv), lang='eng+rus', config=custom_config))  # threshold
             for i in bin_finder(texts_list):
+                print(i)
                 #Цикл для проверки всех БИНов
-                print("FIRSt")
                 response = requests.get(
                     'https://api.smartplaza.kz/partners/api/brand/bin?bin=' + str(i))
                 data1 = response.json()
                 print("Data1 " + str(data1))
                 for key in data1:
                     if key == 'city':
-                        data = {'date': date_finder(texts_list), 'brandId': (data1['brand']['brandId']), 'sum': summa_finder(texts_list), 'Bin': i}
+                        data = {'date': date_finder(texts_list), 'brandId': int((data1['brand']['brandId'])), 'sum': summa_finder(texts_list), 'Bin': int(i)}
                         print("Data " + str(data))
-                        print(type(obj.img))
                         return HttpResponse(json.dumps(data), content_type="application/json")
-                    else:
-                        print('BIN not found')
+            datas = {'date': date_finder(texts_list), 'brandId': 'не найден', 'sum': summa_finder(texts_list), 'Bin': 'не найден'}
+            return HttpResponse(json.dumps(datas), content_type="application/json")
 
     else:
         return HttpResponse(json.dumps("Method not allowed."),
